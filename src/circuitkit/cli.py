@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import basics, eseries, filters, impedance, opamp, rlc
+from pathlib import Path
+
+from . import basics, eseries, filters, impedance, led, nodal, opamp, rlc, thevenin, timer555
 from .units import format_si, parse
 
 
@@ -90,6 +92,83 @@ def _rc(args: argparse.Namespace) -> None:
               f"phase {filters.phase_deg(f, r, c, args.kind):.1f}°")
 
 
+def _solve(args: argparse.Namespace) -> None:
+    ckt = nodal.parse_netlist(Path(args.netlist).read_text())
+    sol = ckt.solve()
+    print("Node voltages:")
+    for node, v in sol.voltages.items():
+        if node != 0:
+            print(f"  V({node}) = {format_si(v, 'V', 5)}")
+    for k, i in enumerate(sol.source_currents, 1):
+        print(f"Voltage source #{k} delivers {format_si(i, 'A', 4)}")
+    if args.thevenin:
+        a, b = (nodal_node(x) for x in args.thevenin)
+        vth, rth = ckt.thevenin(a, b)
+        print(f"Thevenin between {a} and {b}: Vth = {format_si(vth, 'V', 5)}, "
+              f"Rth = {format_si(rth, 'Ω', 5)}")
+
+
+def nodal_node(token: str):
+    if token.lower() in ("0", "gnd", "ground"):
+        return 0
+    return int(token) if token.isdigit() else token
+
+
+def _thevenin(args: argparse.Namespace) -> None:
+    vth, rth = thevenin.of_divider(parse(args.vs), parse(args.r1), parse(args.r2))
+    i_n, _ = thevenin.to_norton(vth, rth)
+    print(f"Thevenin: Vth = {format_si(vth, 'V')}, Rth = {format_si(rth, 'Ω')}")
+    print(f"Norton:   In  = {format_si(i_n, 'A')}, Rn  = {format_si(rth, 'Ω')}")
+    rl, pmax = thevenin.max_power(vth, rth)
+    print(f"Max power: {format_si(pmax, 'W')} into a {format_si(rl, 'Ω')} load")
+    if args.load:
+        r_load = parse(args.load)
+        print(f"With {format_si(r_load, 'Ω')} load: "
+              f"{format_si(thevenin.load_voltage(vth, rth, r_load), 'V')}, "
+              f"{format_si(thevenin.load_power(vth, rth, r_load), 'W')}")
+
+
+def _led(args: argparse.Namespace) -> None:
+    color = args.color
+    try:
+        color = parse(color)
+    except ValueError:
+        pass
+    d = led.design(parse(args.supply), color, parse(args.current), args.count, args.series)
+    print(f"Exact R = {format_si(d['r_exact'], 'Ω')}  ->  use {format_si(d['r_standard'], 'Ω')}")
+    print(f"LED current = {format_si(d['current'], 'A')}")
+    print(f"Resistor dissipates {format_si(d['resistor_power'], 'W')}; "
+          f"use a {d['power_rating']:g} W resistor or bigger")
+
+
+def _timer(args: argparse.Namespace) -> None:
+    c = parse(args.c)
+    series = None if args.exact else args.series
+    if args.mode == "astable":
+        if args.r1 and args.r2:
+            res = {"r1": parse(args.r1), "r2": parse(args.r2),
+                   **timer555.astable(parse(args.r1), parse(args.r2), c)}
+        elif args.f and args.duty:
+            res = timer555.design_astable(parse(args.f), float(args.duty), c, series)
+        else:
+            raise ValueError("astable needs either --r1 and --r2, or -f and --duty")
+        print(f"R1 = {format_si(res['r1'], 'Ω')}, R2 = {format_si(res['r2'], 'Ω')}, "
+              f"C = {format_si(c, 'F')}")
+        print(f"f = {format_si(res['frequency'], 'Hz', 4)}, "
+              f"duty = {res['duty_cycle'] * 100:.1f}%, "
+              f"high {format_si(res['t_high'], 's')}, low {format_si(res['t_low'], 's')}")
+    else:
+        if args.r:
+            r = parse(args.r); width = timer555.monostable(r, c)
+        elif args.width:
+            d = timer555.design_monostable(parse(args.width), c, series)
+            r, width = d["r"], d["pulse_width"]
+        else:
+            raise ValueError("monostable needs either -r or --width")
+        print(f"R = {format_si(r, 'Ω')}, C = {format_si(c, 'F')} -> "
+              f"pulse width {format_si(width, 's', 4)}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="circuitkit",
@@ -139,6 +218,38 @@ def build_parser() -> argparse.ArgumentParser:
     op.add_argument("--kind", choices=["non-inverting", "inverting"], default="non-inverting")
     op.add_argument("--series", choices=["E12", "E24"], default="E12")
     op.set_defaults(func=_opamp)
+
+    so = sub.add_parser("solve", help="Nodal analysis of a SPICE-style netlist file")
+    so.add_argument("netlist", help="Path to a netlist, e.g. examples/wheatstone.cir")
+    so.add_argument("--thevenin", nargs=2, metavar=("A", "B"),
+                    help="Also give the Thevenin equivalent between two nodes")
+    so.set_defaults(func=_solve)
+
+    th = sub.add_parser("thevenin", help="Thevenin/Norton of a voltage divider + max power")
+    th.add_argument("vs"); th.add_argument("r1"); th.add_argument("r2")
+    th.add_argument("--load", help="Also evaluate a specific load resistance")
+    th.set_defaults(func=_thevenin)
+
+    le = sub.add_parser("led", help="LED current-limiting resistor")
+    le.add_argument("supply", help="Supply voltage, e.g. 5")
+    le.add_argument("--color", default="red",
+                    help="LED colour (red, green, blue, white...) or forward voltage")
+    le.add_argument("-i", "--current", default="20m", help="LED current (default 20m)")
+    le.add_argument("-n", "--count", type=int, default=1, help="LEDs in series")
+    le.add_argument("--series", choices=["E12", "E24"], default="E12")
+    le.set_defaults(func=_led)
+
+    tm = sub.add_parser("555", help="555 timer: astable or monostable")
+    tm.add_argument("mode", choices=["astable", "monostable"])
+    tm.add_argument("-c", required=True, help="Timing capacitor, e.g. 10u")
+    tm.add_argument("--r1"); tm.add_argument("--r2")
+    tm.add_argument("-f", help="Target frequency (astable design)")
+    tm.add_argument("--duty", help="Target duty cycle 0.5-1 (astable design)")
+    tm.add_argument("-r", help="Timing resistor (monostable)")
+    tm.add_argument("--width", help="Target pulse width (monostable design)")
+    tm.add_argument("--series", choices=["E12", "E24"], default="E12")
+    tm.add_argument("--exact", action="store_true", help="Exact values, don't round to E-series")
+    tm.set_defaults(func=_timer)
     return p
 
 
@@ -146,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         args.func(args)
-    except ValueError as e:
+    except (ValueError, OSError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     return 0
