@@ -1,6 +1,6 @@
 # circuitkit ⚡
 
-![tests](https://github.com/abdulrafay338444-droid/circuitkit/actions/workflows/tests.yml/badge.svg)
+![tests](https://github.com/abdulrafay338444-droid/circuit-kit/actions/workflows/tests.yml/badge.svg)
 
 A small, fully tested Python toolkit for the circuit calculations that come up constantly in electrical engineering: Ohm's law, resistor networks, voltage dividers and first-order RC filters. It works as a **library** and as a **command-line tool**, and accepts real-world values like `4.7k`, `100n` or `10uF`.
 
@@ -19,8 +19,8 @@ A small, fully tested Python toolkit for the circuit calculations that come up c
 ## Install
 
 ```bash
-git clone https://github.com/abdulrafay338444-droid/circuitkit.git
-cd circuitkit
+git clone https://github.com/abdulrafay338444-droid/circuit-kit.git
+cd circuit-kit
 pip install -e ".[dev,plot]"
 ```
 
