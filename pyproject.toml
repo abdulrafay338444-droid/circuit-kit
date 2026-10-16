@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "circuitkit"
-version = "0.1.0"
-description = "A small, tested toolkit for everyday circuit calculations: Ohm's law, resistor networks, dividers and RC filters."
+version = "0.2.0"
+description = "A tested toolkit for circuit calculations: DC basics, RC/RL/RLC circuits, AC impedance, op-amp design and E12/E24 resistors."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
